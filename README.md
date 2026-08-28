@@ -1,161 +1,143 @@
 # EAES Result Tracker Bot
 
-A Telegram bot that tracks Ethiopian Secondary School Leaving Examination (EAES) results and notifies students when their results are available.
+A Telegram bot that polls `result.eaes.et` for tracked students and notifies
+each chat the moment their EUEE result is published. Drives a real Chrome
+instance via [`nodriver`](https://github.com/ultrafunkamsterdam/nodriver)
+since the site has no public API and sits behind Cloudflare Turnstile.
 
-## Features
+## How it works
 
-* Track results with `/track`
-* View active tracking with `/status`
-* Stop tracking with `/stop`
-* Automatic background polling
-* Async SQLite and PostgreSQL support
-* Persistent Chrome session with `nodriver`
-* Cloudflare Turnstile token detection and automatic form submission
-* Browser health checks and recovery
-* Telegram MarkdownV2-safe result formatting
+- `/track <admission_number> <first_name>` registers a student.
+- A background job checks every active entry on a timer, through one shared
+  Chrome instance (`EAES_MAX_CONCURRENT` checks at a time).
+- On a confirmed result, the bot messages the result and stops tracking it.
+- Failed/pending checks increment an attempt counter; after
+  `EAES_MAX_ATTEMPTS` the entry is dropped and the user is notified.
+- Each poll cycle starts with a browser health check. If Chrome has
+  crashed, the bot relaunches it and skips that cycle — attempt counters
+  are never penalized for an infra failure.
 
-## Architecture
+## Project layout
 
-```text
-eaes-bot/
-├── bot.py
-├── db.py
-├── scraper.py
-├── tests/
-│   └── test_bot.py
-├── requirements.txt
-├── .env.example
-├── .gitignore
-└── README.md
+```
+bot.py       Telegram commands, scheduling, app lifecycle
+scraper.py   nodriver browser automation + result-page parsing
+db.py        Async SQLAlchemy models and CRUD (SQLite/Postgres/MySQL)
+config.py    All environment-variable settings, read once
+utils.py     Regex validation, masking, MarkdownV2 escaping
+tests/       pytest suite
 ```
 
-The main flow is:
+## Prerequisites
 
-```text
-Telegram
-   ↓
-bot.py
-   ├── db.py        → Tracking database
-   └── scraper.py   → EAES browser/session
-                         ↓
-                    Result parsing
-```
+- Python 3.11+
+- Chrome/Chromium installed (or set `EAES_CHROME_EXECUTABLE_PATH`)
+- **Headless Linux only:** Chrome needs a display. Either run under
+  `xvfb-run`, or set `EAES_USE_VIRTUAL_DISPLAY=1` and `pip install
+  pyvirtualdisplay` (+ the `xvfb` system package) to let the bot manage its
+  own. Windows/macOS need neither.
 
-## Requirements
-
-* Python 3.11+
-* Chrome or Chromium
-* `uv`
-* Telegram bot token
-
-## Setup
-
-Clone the repository:
+## Quick start
 
 ```bash
-git clone https://github.com/robelasefa/eaes-bot.git
-cd eaes-bot
+git clone <this-repo> && cd eaes-bot
+python3 -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env   # edit .env, set TELEGRAM_BOT_TOKEN
 ```
 
-Activate your existing virtual environment, then install dependencies with `uv`:
+Export the vars in `.env` into your shell (or use `direnv` / `python-dotenv`),
+then run:
 
 ```bash
-uv pip install -r requirements.txt
+python bot.py                              # Windows / macOS
+xvfb-run -a python bot.py                  # headless Linux, option A
+EAES_USE_VIRTUAL_DISPLAY=1 python bot.py   # headless Linux, option B
 ```
 
-Or install them directly:
+This creates `tracking.db` (or connects to whatever `DATABASE_URL` points
+at), launches a persistent Chrome profile under `./chrome_profile/`, and
+starts polling.
+
+## Environment variables
+
+Full list with defaults in [`.env.example`](./.env.example). The only
+required one is `TELEGRAM_BOT_TOKEN`. Most-used:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | `sqlite+aiosqlite:///tracking.db` | Any SQLAlchemy async URL |
+| `EAES_POLL_INTERVAL_SECONDS` | `300` | Seconds between poll cycles |
+| `EAES_MAX_CONCURRENT` | `3` | Concurrent browser checks per cycle |
+| `EAES_MAX_TRACKED_PER_CHAT` | `10` | Cap on active trackings per chat |
+| `EAES_MAX_ATTEMPTS` | `50` | Attempts before auto-drop |
+| `EAES_USE_VIRTUAL_DISPLAY` | `0` | `1` to self-manage a display on headless Linux |
+
+## Switching databases
+
+Change `DATABASE_URL` and install the matching async driver — no code
+changes needed:
 
 ```bash
-uv pip install python-telegram-bot[job-queue] nodriver SQLAlchemy aiosqlite asyncpg
+pip install asyncpg     # postgresql+asyncpg://user:pass@host:5432/eaes
+pip install aiomysql    # mysql+aiomysql://user:pass@host:3306/eaes
 ```
 
-Create your environment file:
+## Chrome profile directory
+
+`chrome_profile/` holds the persistent session Cloudflare's trust signal
+depends on:
+- must be writable and persist across restarts (deleting it resets trust)
+- must **not** be shared between two bot instances running at once
+- back it up alongside your database if that trust state matters to you
+
+## Tests
 
 ```bash
-cp .env.example .env
+pip install -r requirements-dev.txt
+pytest
 ```
 
-Then set your Telegram bot token and database URL.
+Covers validation regexes, DOM-to-message parsing, and async DB CRUD
+(against a throwaway SQLite file — no external services needed).
 
-## Configuration
+## Deployment
 
-The active environment variables are:
+Any process manager that sets env vars and restarts on failure works. On
+Linux, a systemd unit:
 
-```env
-TELEGRAM_BOT_TOKEN=your-token
-DATABASE_URL=sqlite+aiosqlite:///tracking.db
+```ini
+[Unit]
+Description=EAES Result Tracker Bot
+After=network-online.target
 
-EAES_POLL_INTERVAL_SECONDS=300
-EAES_MAX_CONCURRENT=3
-EAES_MAX_ATTEMPTS=50
-EAES_FETCH_TIMEOUT_SECONDS=60
+[Service]
+Type=simple
+User=eaesbot
+WorkingDirectory=/opt/eaes-bot
+EnvironmentFile=/opt/eaes-bot/.env
+ExecStart=/opt/eaes-bot/venv/bin/python bot.py
+Restart=on-failure
+MemoryMax=1200M
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-You can also use PostgreSQL for production instead of SQLite:
+Set `EAES_USE_VIRTUAL_DISPLAY=1` in `.env` since a systemd service has no
+display of its own. `MemoryMax` + `Restart=on-failure` recycle a leaked or
+stuck process rather than taking the host down.
 
-```env
-DATABASE_URL=postgresql+asyncpg://user:password@host:5432/eaes
-```
+## Operational notes
 
-## Running
+- This scrapes around a third-party portal's anti-bot protection — if EAES
+  changes its DOM or tightens Cloudflare, checks will start failing with
+  `status=blocked`/`status=error`. Watch for those rising relative to
+  `status=pending`.
+- Admission numbers are always masked in logs (e.g. `12****56`).
+- No automated DB backups. For SQLite in WAL mode, checkpoint first or copy
+  the `.db`, `.db-wal`, and `.db-shm` files together.
 
-Start the bot with:
+## License
 
-```bash
-python bot.py
-```
-
-## Commands
-
-```text
-/start
-/track <admission_number> <first_name>
-/status
-/stop <admission_number>
-```
-
-Example:
-
-```text
-/track 0045781312 Yabira
-```
-
-## Browser Session
-
-The bot uses `nodriver` to control a persistent Chrome session.
-
-The scraper checks the EAES page for the Cloudflare Turnstile response field:
-
-```text
-cf-turnstile-response
-```
-
-Once the Turnstile token is available, the scraper automatically triggers the result form submission and continues with DOM extraction and parsing.
-
-If a valid token is not available within the configured wait period, the check is treated as blocked and retried during a later polling cycle.
-
-## Database
-
-The project uses SQLAlchemy 2.0's async API.
-
-SQLite is the default:
-
-```text
-sqlite+aiosqlite:///tracking.db
-```
-
-PostgreSQL is also supported:
-
-```text
-postgresql+asyncpg://user:password@host:5432/eaes
-```
-
-## Testing
-
-Run the test suite with:
-
-```bash
-uv run pytest -q
-```
-
-Tests use synthetic data only and an isolated in-memory database.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

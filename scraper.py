@@ -1,8 +1,10 @@
 """
-Web Scraping & DOM Parsing Module
-=================================
-Handles nodriver browser instances, Cloudflare Turnstile token checks,
-DOM synthetic interaction, and output markdown formatting.
+All browser-automation and result-parsing logic for result.eaes.et.
+
+This module owns everything that touches `nodriver` (a CDP-based Chrome
+driver) plus the pure-text DOM parsing that turns a scraped page into a
+Telegram message. bot.py should never import `nodriver` directly — it only
+calls the functions below.
 """
 
 from __future__ import annotations
@@ -10,75 +12,134 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import platform
 import random
-import re
-from typing import Optional
 
 import nodriver as uc
+from utils import escape_md_v2, mask
 
-logger = logging.getLogger("eaes_scraper")
+import config
 
-EAES_URL = "https://result.eaes.et/"
+logger = logging.getLogger("eaes_bot.scraper")
 
-# Validation Patterns
-ADMISSION_NUMBER_RE = re.compile(r"^[A-Za-z0-9/\-]{3,30}$")
-FIRST_NAME_RE = re.compile(r"^[A-Za-z\s.\-]{2,60}$")
-
-# Markdown Escaping Regular Expressions
-_MDV2_RESERVED_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!])")
-_CODE_SPAN_RESERVED_RE = re.compile(r"([`\\])")
+_virtual_display = None  # populated by start_browser() when requested
 
 
-def mask_identifier(value: str) -> str:
-    """Masks admission numbers for privacy in logs."""
-    if not value:
-        return ""
-    if len(value) <= 4:
-        return "*" * len(value)
-    return value[:2] + "*" * (len(value) - 4) + value[-2:]
+async def _jitter_sleep(base_seconds: float) -> None:
+    """Sleep base_seconds plus a small random jitter to avoid rigid timing signatures."""
+    jitter = random.uniform(config.JITTER_MIN_SECONDS, config.JITTER_MAX_SECONDS)
+    await asyncio.sleep(base_seconds + jitter)
 
 
-def escape_md_v2(text: str) -> str:
-    """Escapes Telegram MarkdownV2 reserved characters for structural text."""
-    if text is None:
-        return ""
-    return _MDV2_RESERVED_RE.sub(r"\\\1", str(text))
+# Browser lifecycle
+async def start_browser() -> uc.Browser:
+    """Starts (or restarts) the shared, persistent Chrome instance.
+
+    Cross-platform notes:
+      - On Windows/macOS, running with a real desktop session, no extra
+        setup is needed — nodriver drives the normal, visible Chrome window.
+      - On headless Linux (a server with no X session), Chrome still needs
+        *some* display to render into for Turnstile to reliably pass. Either:
+          (a) run the bot under an externally managed `xvfb-run` wrapper, or
+          (b) set EAES_USE_VIRTUAL_DISPLAY=1 to have this function start a
+              virtual display itself via `pyvirtualdisplay` (requires the
+              `pyvirtualdisplay` pip package and the `xvfb` system package).
+      This function never shells out to Xvfb directly, so nothing here is
+      Linux-specific unless you opt into (b).
+    """
+    global _virtual_display
+
+    if config.USE_VIRTUAL_DISPLAY and platform.system() == "Linux":
+        try:
+            from pyvirtualdisplay import Display
+
+            _virtual_display = Display(visible=False, size=(1920, 1080))
+            _virtual_display.start()
+            logger.info("Virtual display started (pyvirtualdisplay).")
+        except ImportError:
+            logger.error(
+                "EAES_USE_VIRTUAL_DISPLAY=1 but pyvirtualdisplay isn't installed. "
+                "Install it with `pip install pyvirtualdisplay`, or run this "
+                "process under `xvfb-run` instead."
+            )
+            raise
+
+    kwargs = dict(
+        user_data_dir=config.CHROME_PROFILE_DIR,
+        headless=False,  # Turnstile is far more likely to pass in headed mode.
+    )
+    if config.CHROME_EXECUTABLE_PATH:
+        kwargs["browser_executable_path"] = config.CHROME_EXECUTABLE_PATH
+
+    browser = await uc.start(**kwargs)
+    logger.info("nodriver browser started with persistent session profile.")
+    return browser
 
 
-def escape_code_span(text: str) -> str:
-    """Escapes inline code span characters (`...`) - only backticks and backslashes."""
-    if text is None:
-        return ""
-    return _CODE_SPAN_RESERVED_RE.sub(r"\\\1", str(text))
+def stop_browser(browser: uc.Browser | None) -> None:
+    """Best-effort synchronous stop, safe to call with None or a dead browser."""
+    global _virtual_display
+    if browser is not None:
+        try:
+            browser.stop()
+        except Exception:
+            logger.exception("Error stopping nodriver browser")
+    if _virtual_display is not None:
+        try:
+            _virtual_display.stop()
+        except Exception:
+            logger.exception("Error stopping virtual display")
+        _virtual_display = None
 
 
-async def jitter_sleep(min_s: float = 0.5, max_s: float = 2.0) -> None:
-    """Introduces random timing delay to avoid rigid execution signatures."""
-    await asyncio.sleep(random.uniform(min_s, max_s))
+async def is_browser_alive(
+    browser: uc.Browser, timeout_seconds: int | None = None
+) -> bool:
+    """Lightweight liveness check: open a blank tab, run trivial JS, close it.
 
-
-async def check_browser_health(browser: Optional[uc.Browser]) -> bool:
-    """Verifies that the nodriver browser process is alive and responsive."""
-    if browser is None:
-        return False
+    Bounded by BROWSER_HEALTH_CHECK_TIMEOUT_SECONDS so a hung-but-not-dead
+    browser process doesn't stall the health check itself.
+    """
+    timeout_seconds = timeout_seconds or config.BROWSER_HEALTH_CHECK_TIMEOUT_SECONDS
+    page = None
     try:
-        page = await browser.get("about:blank", new_tab=True)
-        await page.close()
-        return True
+
+        async def _probe() -> bool:
+            nonlocal page
+            page = await browser.get("about:blank", new_tab=True)
+            result = await page.evaluate("1 + 1")
+            return result == 2
+
+        return await asyncio.wait_for(_probe(), timeout=timeout_seconds)
     except Exception as e:
         logger.warning("Browser health check failed: %s", e)
         return False
+    finally:
+        if page is not None:
+            try:
+                await page.close()
+            except Exception:
+                pass
 
 
+# Result fetching
+#
+# fetch_eaes_result returns a dict with a "status" key so callers can tell apart
+# a genuine "not published yet" response from a Cloudflare block or DOM/parse
+# failure, instead of collapsing everything into None:
+#   status == "success"  -> raw_text contains the rendered result payload
+#   status == "pending"  -> page loaded fine, but result isn't published yet
+#   status == "blocked"  -> Cloudflare Turnstile token never attached in time
+#   status == "error"    -> button not found / DOM extraction failed / exception
 async def fetch_eaes_result(
     browser: uc.Browser, admission_number: str, first_name: str
 ) -> dict:
-    """Executes turnstile bypass and fetches examination result DOM text."""
     page = None
     try:
-        page = await browser.get(EAES_URL, new_tab=True)
-        await jitter_sleep(3.0, 5.0)
+        page = await browser.get(config.EAES_URL, new_tab=True)
+        await _jitter_sleep(4)
 
+        # 1. Fill input values natively
         adm_json = json.dumps(str(admission_number))
         name_json = json.dumps(str(first_name))
 
@@ -102,11 +163,17 @@ async def fetch_eaes_result(
         """
         filled = await page.evaluate(fill_js)
         if not filled:
+            logger.warning(
+                "Could not locate admission/name inputs for %s", mask(admission_number)
+            )
             return {"status": "error", "reason": "inputs_not_found"}
 
-        await jitter_sleep(1.0, 2.0)
+        await _jitter_sleep(1)
 
-        # Poll for Cloudflare Turnstile completion
+        # 2. Poll up to 20 seconds for Cloudflare Turnstile token
+        logger.info(
+            "Waiting for Cloudflare turnstile token to attach to parent form..."
+        )
         token_ready = False
         for _ in range(20):
             has_token = await page.evaluate("""
@@ -120,11 +187,20 @@ async def fetch_eaes_result(
                 break
             await asyncio.sleep(1)
 
+        logger.info("Turnstile token ready: %s", token_ready)
+
         if not token_ready:
+            logger.warning(
+                "Cloudflare Turnstile token failed to attach in time for %s",
+                mask(admission_number),
+            )
             return {"status": "blocked", "reason": "turnstile_timeout"}
 
-        # Fire synthetic click events
-        await page.evaluate("""
+        # 3. Fire full React synthetic event sequence (PointerDown -> MouseDown -> Click)
+        logger.info(
+            "Dispatching synthetic React click sequence to 'Check Result' button..."
+        )
+        clicked = await page.evaluate("""
         (() => {
             const btns = Array.from(document.querySelectorAll('button'));
             const btn = btns.find(b => b.innerText.toLowerCase().includes('check')) || btns[0];
@@ -140,11 +216,26 @@ async def fetch_eaes_result(
             return true;
         })()
         """)
+        if not clicked:
+            logger.warning(
+                "Check-result button not found for %s", mask(admission_number)
+            )
+            return {"status": "error", "reason": "button_not_found"}
 
-        await jitter_sleep(5.0, 7.0)
+        # 4. Wait for Next.js routing / network render
+        logger.info("Waiting for results page to render...")
+        await _jitter_sleep(6)
 
-        raw_text = await page.evaluate("(() => document.body.innerText.trim())()")
-        if not isinstance(raw_text, str) or not raw_text:
+        # 5. Extract DOM result
+        extract_js = """
+        (() => document.body.innerText.trim())()
+        """
+        raw_text = await page.evaluate(extract_js)
+        if not isinstance(raw_text, str):
+            raw_text = ""
+
+        if not raw_text:
+            logger.warning("Empty DOM extraction for %s", mask(admission_number))
             return {"status": "error", "reason": "empty_extraction"}
 
         if "Enter credentials to view your exam results" in raw_text:
@@ -153,34 +244,46 @@ async def fetch_eaes_result(
         if "TOTAL" in raw_text:
             return {"status": "success", "raw_text": raw_text}
 
+        # Page rendered something, but it doesn't match a known state.
+        logger.warning("Unrecognized page state for %s", mask(admission_number))
         return {
             "status": "error",
-            "reason": "unrecognized_state",
-            "raw_text": raw_text[:300],
+            "reason": "unrecognized_page_state",
+            "raw_text": raw_text[:500],
         }
 
     except Exception as e:
         logger.error(
-            "Error checking admission %s: %s", mask_identifier(admission_number), e
+            "Error executing fetch_eaes_result for %s: %s",
+            mask(admission_number),
+            e,
+            exc_info=True,
         )
         return {"status": "error", "reason": "exception"}
+
     finally:
         if page is not None:
             try:
                 await page.close()
             except Exception:
-                pass
+                logger.exception("Failed to close tab for %s", mask(admission_number))
 
 
 def parse_eaes_raw_text(raw_text: str) -> str:
-    """Parses extracted DOM body text into a formatted Telegram MarkdownV2 message."""
+    """Parses raw extracted DOM text from EAES into a clean Telegram Markdown message."""
     lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
 
-    name, school = "Unknown", "Unknown"
-    admission_no, stream, gender = "N/A", "N/A", "N/A"
-    total_score, avg_score = "N/A", "N/A"
+    # Defaults
+    name = "Unknown"
+    school = "Unknown"
+    admission_no = "N/A"
+    stream = "N/A"
+    gender = "N/A"
+    total_score = "N/A"
+    avg_score = "N/A"
     subjects: list[tuple[str, str]] = []
 
+    # Known subject labels on EAES
     known_subjects = {
         "English",
         "Mathematics",
@@ -193,6 +296,7 @@ def parse_eaes_raw_text(raw_text: str) -> str:
         "Geography",
     }
 
+    # Extract Header Data
     for i, line in enumerate(lines):
         if line == "Admission No:" and i + 1 < len(lines):
             admission_no = lines[i + 1]
@@ -205,31 +309,40 @@ def parse_eaes_raw_text(raw_text: str) -> str:
         elif line == "AVG" and i + 1 < len(lines):
             avg_score = lines[i + 1]
         elif line in known_subjects and i + 1 < len(lines):
-            subjects.append((line, lines[i + 1]))
+            score = lines[i + 1]
+            subjects.append((line, score))
 
+    # Name and School usually appear right above Admission No
     try:
-        adm_idx = lines.index("Admission No:")
-        if adm_idx >= 2:
-            name = lines[adm_idx - 2]
-            school = lines[adm_idx - 1]
+        adm_index = lines.index("Admission No:")
+        if adm_index >= 2:
+            name = lines[adm_index - 2]
+            school = lines[adm_index - 1]
     except ValueError:
         pass
 
+    # Build Telegram Output (MarkdownV2)
+    #
+    # All dynamic values (name, school, admission_no, stream, gender, scores,
+    # subject names) are parsed straight from the DOM and can contain
+    # characters MarkdownV2 treats as formatting syntax, so every one of them
+    # is passed through escape_md_v2 before being embedded. Static label
+    # text with reserved characters (e.g. "!", ".") is escaped inline too.
     msg_lines = [
         "🎓 *EAES Exam Result Found\\!*",
         "",
-        f"👤 *Name:* `{escape_code_span(name)}`",
-        f"🏫 *School:* `{escape_code_span(school)}`",
-        f"🆔 *Admission No:* `{escape_code_span(admission_no)}`",
-        f"📚 *Stream:* `{escape_code_span(stream)}` \\| *Sex:* `{escape_code_span(gender)}`",
+        f"👤 *Name:* `{escape_md_v2(name)}`",
+        f"🏫 *School:* `{escape_md_v2(school)}`",
+        f"🆔 *Admission No:* `{escape_md_v2(admission_no)}`",
+        f"📚 *Stream:* `{escape_md_v2(stream)}` \\| *Sex:* `{escape_md_v2(gender)}`",
         "",
-        f"🏆 *TOTAL SCORE:* `{escape_code_span(total_score)}`",
-        f"📈 *AVERAGE:* `{escape_code_span(avg_score)}`",
+        f"🏆 *TOTAL SCORE:* `{escape_md_v2(total_score)}`",
+        f"📈 *AVERAGE:* `{escape_md_v2(avg_score)}`",
         "",
         "*📋 Subject Breakdown:*",
     ]
 
     for subj, score in subjects:
-        msg_lines.append(f"• *{escape_md_v2(subj)}:* `{escape_code_span(score)}`")
+        msg_lines.append(f"• *{escape_md_v2(subj)}:* `{escape_md_v2(score)}`")
 
     return "\n".join(msg_lines)

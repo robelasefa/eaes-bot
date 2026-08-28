@@ -4,3 +4,15 @@ sqlalchemy[asyncio]>=2.0.0
 aiosqlite>=0.19.0
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
+
+python-telegram-bot[job-queue]>=21,<22
+nodriver>=0.36
+SQLAlchemy>=2.0,<3.0
+aiosqlite>=0.20
+
+# Uncomment the driver(s) you need for production databases:
+# asyncpg>=0.29          # PostgreSQL
+# aiomysql>=0.2           # MySQL
+
+# Optional: only needed if EAES_USE_VIRTUAL_DISPLAY=1 on headless Linux
+# pyvirtualdisplay>=3.0
