@@ -203,7 +203,9 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     lines = ["Currently tracking:"]
     for r in records:
-        lines.append(f"• {r.admission_number} ({r.first_name}) — Attempts: {r.attempts}")
+        lines.append(
+            f"• {r.admission_number} ({r.first_name}) — Attempts: {r.attempts}"
+        )
     await update.message.reply_text("\n".join(lines))
 
 

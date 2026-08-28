@@ -29,7 +29,7 @@ def test_regex_validation():
     assert ADMISSION_NUMBER_RE.match("ETH/999/23")
     assert not ADMISSION_NUMBER_RE.match("AB")
 
-    assert FIRST_NAME_RE.match("Abebe")
+    assert FIRST_NAME_RE.match("Abel")
     assert FIRST_NAME_RE.match("Kebede-Alemu")
     assert not FIRST_NAME_RE.match("12345")
 
@@ -42,7 +42,7 @@ def test_markdown_escaping():
 
 def test_dom_parsing():
     sample_raw_text = """
-    Abebe Balcha
+    Abel Ermiyas
     Higa Model Boarding School
     Admission No:
     123456
@@ -61,7 +61,7 @@ def test_dom_parsing():
     """
     output = parse_eaes_raw_text(sample_raw_text)
 
-    assert "Abebe Balcha" in output
+    assert "Abel Ermiyas" in output
     assert "123456" in output
     assert "580" in output
     assert "88" in output
@@ -83,18 +83,18 @@ async def async_session():
 @pytest.mark.asyncio
 async def test_database_crud(async_session):
     res = await add_tracking(
-        async_session, chat_id=1001, admission_number="123456", first_name="Abebe"
+        async_session, chat_id=1001, admission_number="123456", first_name="Abel"
     )
     assert res == "added"
 
     res_dup = await add_tracking(
-        async_session, chat_id=1001, admission_number="123456", first_name="Abebe"
+        async_session, chat_id=1001, admission_number="123456", first_name="Abel"
     )
     assert res_dup == "exists"
 
     records = await list_chat_tracking(async_session, chat_id=1001)
     assert len(records) == 1
-    assert records[0].first_name == "Abebe"
+    assert records[0].first_name == "Abel"
 
     attempts = await increment_attempts(
         async_session, chat_id=1001, admission_number="123456"
