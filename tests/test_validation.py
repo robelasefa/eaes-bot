@@ -1,6 +1,13 @@
 import pytest
 
-from utils import ADMISSION_NUMBER_RE, FIRST_NAME_RE, escape_md_v2, mask
+from utils import (
+    ADMISSION_NUMBER_RE,
+    FIRST_NAME_RE,
+    build_stop_callback_data,
+    escape_md_v2,
+    mask,
+    parse_stop_callback_data,
+)
 
 
 @pytest.mark.parametrize(
@@ -89,3 +96,25 @@ def test_escape_md_v2_handles_none():
 
 def test_escape_md_v2_leaves_plain_text_untouched():
     assert escape_md_v2("Abebe") == "Abebe"
+
+
+def test_stop_callback_data_roundtrips():
+    payload = build_stop_callback_data("ET-2024-00123")
+    assert parse_stop_callback_data(payload) == "ET-2024-00123"
+
+
+def test_stop_callback_data_stays_within_telegram_limit():
+    # Telegram caps callback_data at 64 bytes; admission numbers are capped
+    # at 30 chars by ADMISSION_NUMBER_RE, so the encoded payload must fit.
+    payload = build_stop_callback_data("A" * 30)
+    assert len(payload.encode("utf-8")) <= 64
+
+
+def test_parse_stop_callback_data_rejects_unrelated_payload():
+    assert parse_stop_callback_data("something_else:123") is None
+
+
+def test_parse_stop_callback_data_rejects_empty_and_none():
+    assert parse_stop_callback_data("") is None
+    assert parse_stop_callback_data(None) is None
+    assert parse_stop_callback_data("stop:") is None  # prefix with no payload

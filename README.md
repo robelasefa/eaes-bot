@@ -1,5 +1,9 @@
 # EAES Result Tracker Bot
 
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![tests](https://github.com/<owner>/<repo>/actions/workflows/tests.yml/badge.svg)](https://github.com/robelasefa/eaes-bot/actions/workflows/tests.yml)
+
 A Telegram bot that polls `result.eaes.et` for tracked students and notifies
 each chat the moment their EUEE result is published. Drives a real Chrome
 instance via [`nodriver`](https://github.com/ultrafunkamsterdam/nodriver)
@@ -8,6 +12,8 @@ since the site has no public API and sits behind Cloudflare Turnstile.
 ## How it works
 
 - `/track <admission_number> <first_name>` registers a student.
+- `/status` lists what you're tracking, each entry with an inline "Stop"
+  button — tap it instead of typing `/stop <number>`.
 - A background job checks every active entry on a timer, through one shared
   Chrome instance (`EAES_MAX_CONCURRENT` checks at a time).
 - On a confirmed result, the bot messages the result and stops tracking it.
@@ -140,4 +146,4 @@ stuck process rather than taking the host down.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [`LICENSE`](./LICENSE).

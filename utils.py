@@ -1,4 +1,8 @@
-"""Small shared helpers used by both bot.py and scraper.py."""
+"""Small shared helpers used by bot.py, scraper.py, and db.py.
+
+Nothing in this module depends on Telegram, SQLAlchemy, or nodriver, so it's
+safe to import from anywhere without creating a dependency cycle.
+"""
 
 from __future__ import annotations
 
@@ -8,8 +12,15 @@ import re
 # dynamic string interpolated into a MarkdownV2 message.
 _MDV2_RESERVED_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!])")
 
+#: Admission numbers as issued by EAES: letters, digits, slashes, hyphens.
 ADMISSION_NUMBER_RE = re.compile(r"^[A-Za-z0-9/\-]{3,30}$")
+
+#: First names: letters, spaces, periods, and hyphens only (e.g. "Mary-Jane", "O.J.").
 FIRST_NAME_RE = re.compile(r"^[A-Za-z\s.\-]{2,60}$")
+
+#: Prefix used for the "stop tracking" inline-keyboard callback_data payload.
+#: Kept short since Telegram caps callback_data at 64 bytes.
+STOP_CALLBACK_PREFIX = "stop:"
 
 
 def mask(value: str) -> str:
@@ -32,3 +43,25 @@ def escape_md_v2(text) -> str:
     if text is None:
         return ""
     return _MDV2_RESERVED_RE.sub(r"\\\1", str(text))
+
+
+def build_stop_callback_data(admission_number: str) -> str:
+    """Builds the callback_data payload for a "Stop tracking" inline button.
+
+    Kept as a small pure function (rather than inlined f-strings in bot.py)
+    so the encode/decode pair can be unit tested without needing a real
+    Telegram Update/CallbackQuery object.
+    """
+    return f"{STOP_CALLBACK_PREFIX}{admission_number}"
+
+
+def parse_stop_callback_data(data: str) -> str | None:
+    """Extracts the admission number from a "Stop tracking" callback payload.
+
+    Returns None if `data` doesn't match the expected prefix, so callers can
+    ignore callback_data they don't recognize instead of raising.
+    """
+    if not data or not data.startswith(STOP_CALLBACK_PREFIX):
+        return None
+    admission_number = data[len(STOP_CALLBACK_PREFIX):]
+    return admission_number or None

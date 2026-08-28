@@ -15,14 +15,25 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import config
-from telegram import Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
-from telegram.ext import Application, CommandHandler, ContextTypes
-from utils import ADMISSION_NUMBER_RE, FIRST_NAME_RE, mask
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+)
 
+import config
 import db
 import scraper
+from utils import (
+    ADMISSION_NUMBER_RE,
+    FIRST_NAME_RE,
+    build_stop_callback_data,
+    mask,
+    parse_stop_callback_data,
+)
 
 if not config.BOT_TOKEN:
     raise SystemExit("Set the TELEGRAM_BOT_TOKEN environment variable before running.")
@@ -41,6 +52,15 @@ async def check_one_student(
     semaphore: asyncio.Semaphore,
     row: db.Tracking,
 ) -> None:
+    """Checks a single tracked student and reacts to the outcome.
+
+    On a confirmed result: sends the formatted message and stops tracking
+    the entry. On anything else (pending, blocked, error, or an unexpected
+    exception): increments the attempt counter via
+    `_record_attempt_and_maybe_drop`, which auto-drops and notifies the user
+    once `config.MAX_ATTEMPTS` is reached. Runs under `semaphore` so at most
+    `config.MAX_CONCURRENT_CHECKS` browser tabs are open at once.
+    """
     chat_id = row.chat_id
     admission_number = row.admission_number
     first_name = row.first_name
@@ -150,7 +170,7 @@ async def _record_attempt_and_maybe_drop(
     application: Application, chat_id: int, admission_number: str
 ) -> None:
     """Increments the attempt counter and drops + notifies once MAX_ATTEMPTS is hit."""
-    attempts = await db.record_attempt(chat_id, admission_number)
+    attempts = await db.increment_attempts(chat_id, admission_number)
     if attempts < config.MAX_ATTEMPTS:
         return
 
@@ -195,6 +215,12 @@ async def _relaunch_browser(application: Application):
 
 
 async def poll_cycle(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Scheduled job (`job_queue.run_repeating`): checks every active tracking row.
+
+    Guarded so overlapping runs never share the single Chrome instance, and
+    so a crashed/hung browser causes a relaunch-and-skip rather than every
+    tracked student getting an attempt penalized for an infra problem.
+    """
     application: Application = context.application
     browser = application.bot_data.get("browser")
     if browser is None:
@@ -247,6 +273,7 @@ async def poll_cycle(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 # Telegram command handlers
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /start (and doubles as /help): shows a short command summary."""
     await update.message.reply_text(
         "EAES Result Tracker\n\n"
         "/track <admission_number> <first_name> — start tracking a result\n"
@@ -258,6 +285,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_track(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /track <admission_number> <first_name>: registers a new entry."""
     chat_id = update.effective_chat.id
     args = context.args or []
     if len(args) < 2:
@@ -298,6 +326,7 @@ async def cmd_track(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /status: lists tracked entries, each with an inline Stop button."""
     chat_id = update.effective_chat.id
     rows = await db.list_for_chat(chat_id)
     if not rows:
@@ -305,15 +334,28 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     lines = ["Currently tracking:"]
+    keyboard_rows = []
     for row in rows:
         lines.append(
             f"• {row.admission_number} ({row.first_name}) — "
             f"{row.status} ({row.attempts}/{config.MAX_ATTEMPTS} attempts)"
         )
-    await update.message.reply_text("\n".join(lines))
+        keyboard_rows.append(
+            [
+                InlineKeyboardButton(
+                    f"Stop {row.admission_number}",
+                    callback_data=build_stop_callback_data(row.admission_number),
+                )
+            ]
+        )
+
+    await update.message.reply_text(
+        "\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard_rows)
+    )
 
 
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /stop <admission_number>: removes one tracked entry by typed command."""
     chat_id = update.effective_chat.id
     args = context.args or []
     if len(args) != 1:
@@ -328,25 +370,64 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("You weren't tracking that admission number.")
 
 
+async def on_stop_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles taps on the inline "Stop <admission_number>" button from /status.
+
+    Same effect as /stop, reached via a tap instead of typing the admission
+    number back in. Always answers the callback query first so Telegram
+    clears the button's loading spinner even if the removal itself fails.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    admission_number = parse_stop_callback_data(query.data)
+    if admission_number is None:
+        return
+
+    chat_id = update.effective_chat.id
+    removed = await db.remove_tracking(chat_id, admission_number)
+    text = (
+        f"Stopped tracking {admission_number}."
+        if removed
+        else "That entry is no longer being tracked."
+    )
+    await query.edit_message_text(text)
+
+
 # Application lifecycle
 async def post_init(application: Application) -> None:
+    """Runs once on startup: initializes the DB, launches Chrome, sets the command menu."""
     await db.init_db()
     application.bot_data["poll_running"] = False
     application.bot_data["browser"] = await scraper.start_browser()
 
+    # Populates Telegram's built-in "/" command autocomplete menu in clients.
+    await application.bot.set_my_commands(
+        [
+            BotCommand("start", "Show usage instructions"),
+            BotCommand("help", "Show usage instructions"),
+            BotCommand("track", "Track a new admission number"),
+            BotCommand("status", "List what you're tracking"),
+            BotCommand("stop", "Stop tracking an admission number"),
+        ]
+    )
+
 
 async def post_shutdown(application: Application) -> None:
+    """Runs once on shutdown: stops Chrome and closes the DB connection pool."""
     scraper.stop_browser(application.bot_data.get("browser"))
     await db.close_db()
     logger.info("Shutdown complete.")
 
 
 async def error_handler(update, context):
+    """Global error handler registered via `Application.add_error_handler`."""
     logger.error("Exception while handling an update:", exc_info=context.error)
 
 
 # Entry point
 def main() -> None:
+    """Builds the Application, registers handlers and the poll job, and starts polling."""
     application = (
         Application.builder()
         .token(config.BOT_TOKEN)
@@ -355,10 +436,11 @@ def main() -> None:
         .build()
     )
 
-    application.add_handler(CommandHandler("start", cmd_start))
+    application.add_handler(CommandHandler(["start", "help"], cmd_start))
     application.add_handler(CommandHandler("track", cmd_track))
     application.add_handler(CommandHandler("status", cmd_status))
     application.add_handler(CommandHandler("stop", cmd_stop))
+    application.add_handler(CallbackQueryHandler(on_stop_button, pattern="^stop:"))
     application.add_error_handler(error_handler)
 
     application.job_queue.run_repeating(

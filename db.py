@@ -39,14 +39,14 @@ _SessionLocal = async_sessionmaker(bind=_engine, expire_on_commit=False)
 
 
 class Base(DeclarativeBase):
-    pass
+    """Declarative base shared by every ORM model in this module."""
 
 
 class Tracking(Base):
+    """One row per (chat, admission_number) pair being polled for a result."""
+
     __tablename__ = "tracking"
-    __table_args__ = (
-        Index("idx_tracking_status", "status"),
-    )
+    __table_args__ = (Index("idx_tracking_status", "status"),)
 
     # Composite primary key, mirroring the original schema: one row per
     # (chat, admission_number) pair.
@@ -60,6 +60,7 @@ class Tracking(Base):
 
 
 def _now_iso() -> str:
+    """Returns the current UTC time as an ISO-8601 string, for created_at/updated_at."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
@@ -121,6 +122,7 @@ async def add_tracking(chat_id: int, admission_number: str, first_name: str) -> 
 
 
 async def remove_tracking(chat_id: int, admission_number: str) -> bool:
+    """Deletes one tracking row. Returns True if a row was actually deleted."""
     async with session_scope() as session:
         async with session.begin():
             result = await session.execute(
@@ -133,6 +135,7 @@ async def remove_tracking(chat_id: int, admission_number: str) -> bool:
 
 
 async def list_for_chat(chat_id: int) -> list[Tracking]:
+    """Returns every tracking row for a chat (any status), oldest first."""
     async with session_scope() as session:
         result = await session.execute(
             select(Tracking)
@@ -143,9 +146,12 @@ async def list_for_chat(chat_id: int) -> list[Tracking]:
 
 
 async def list_active() -> list[Tracking]:
+    """Returns every row with status='active' across all chats, for the poll cycle."""
     async with session_scope() as session:
         result = await session.execute(
-            select(Tracking).where(Tracking.status == "active").order_by(Tracking.updated_at)
+            select(Tracking)
+            .where(Tracking.status == "active")
+            .order_by(Tracking.updated_at)
         )
         return list(result.scalars().all())
 
@@ -173,12 +179,13 @@ async def increment_attempts(chat_id: int, admission_number: str) -> int:
             return row or 0
 
 
-# Old name kept as an alias so any external code (or your own tests) written
+# Old name kept as an alias so any external code written
 # against the previous function name keeps working.
 record_attempt = increment_attempts
 
 
 async def delete_tracking(chat_id: int, admission_number: str) -> None:
+    """Unconditionally deletes a tracking row (no-op if it doesn't exist)."""
     async with session_scope() as session:
         async with session.begin():
             await session.execute(

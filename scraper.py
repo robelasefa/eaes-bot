@@ -16,9 +16,9 @@ import platform
 import random
 
 import nodriver as uc
-from utils import escape_md_v2, mask
 
 import config
+from utils import escape_md_v2, mask
 
 logger = logging.getLogger("eaes_bot.scraper")
 
