@@ -269,6 +269,37 @@ async def fetch_eaes_result(
                 logger.exception("Failed to close tab for %s", mask(admission_number))
 
 
+#: Subject labels EAES uses on the results page. This is the source of
+#: truth for which lines get parsed as a subject score at all.
+KNOWN_SUBJECTS = {
+    "English",
+    "Mathematics",
+    "Scholastic Aptitude Test",
+    "Physics",
+    "Chemistry",
+    "Biology",
+    "History",
+    "Economics",
+    "Geography",
+}
+
+#: Per-subject emoji used in the result breakdown. Deliberately a separate
+#: mapping from KNOWN_SUBJECTS (not derived from it) so a subject can be
+#: recognized and parsed correctly even before someone adds an emoji for
+#: it here — the breakdown falls back to a plain bullet in that case.
+SUBJECT_EMOJIS = {
+    "English": "📖",
+    "Mathematics": "🔢",
+    "Scholastic Aptitude Test": "🧠",
+    "Physics": "⚛️",
+    "Chemistry": "🧪",
+    "Biology": "🧬",
+    "History": "📜",
+    "Economics": "💰",
+    "Geography": "🌍",
+}
+
+
 def parse_eaes_raw_text(raw_text: str) -> str:
     """Parses raw extracted DOM text from EAES into a clean Telegram Markdown message."""
     lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
@@ -283,18 +314,7 @@ def parse_eaes_raw_text(raw_text: str) -> str:
     avg_score = "N/A"
     subjects: list[tuple[str, str]] = []
 
-    # Known subject labels on EAES
-    known_subjects = {
-        "English",
-        "Mathematics",
-        "Scholastic Aptitude Test",
-        "Physics",
-        "Chemistry",
-        "Biology",
-        "History",
-        "Economics",
-        "Geography",
-    }
+    known_subjects = KNOWN_SUBJECTS
 
     # Extract Header Data
     for i, line in enumerate(lines):
@@ -343,6 +363,7 @@ def parse_eaes_raw_text(raw_text: str) -> str:
     ]
 
     for subj, score in subjects:
-        msg_lines.append(f"• *{escape_md_v2(subj)}:* `{escape_md_v2(score)}`")
+        emoji = SUBJECT_EMOJIS.get(subj, "•")
+        msg_lines.append(f"{emoji} *{escape_md_v2(subj)}:* `{escape_md_v2(score)}`")
 
     return "\n".join(msg_lines)

@@ -51,7 +51,7 @@ class Tracking(Base):
     # Composite primary key, mirroring the original schema: one row per
     # (chat, admission_number) pair.
     chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    admission_number: Mapped[str] = mapped_column(String(30), primary_key=True)
+    admission_number: Mapped[str] = mapped_column(String(8), primary_key=True)
     first_name: Mapped[str] = mapped_column(String(60), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -179,7 +179,7 @@ async def increment_attempts(chat_id: int, admission_number: str) -> int:
             return row or 0
 
 
-# Old name kept as an alias so any external code written
+# Old name kept as an alias so any extera  written
 # against the previous function name keeps working.
 record_attempt = increment_attempts
 

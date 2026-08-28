@@ -13,12 +13,9 @@ from utils import (
 @pytest.mark.parametrize(
     "value",
     [
-        "123456",
-        "AB/1234-56",
-        "12-34-56",
-        "A1B2C3",
-        "1" * 30,  # max length
-        "abc",  # min length
+        "12345678",
+        "00000001",
+        "99999999",
     ],
 )
 def test_admission_number_accepts_valid(value):
@@ -29,11 +26,13 @@ def test_admission_number_accepts_valid(value):
     "value",
     [
         "",
-        "ab",  # too short
-        "1" * 31,  # too long
-        "12 34",  # spaces not allowed
-        "abc@123",  # invalid char
-        "abc#123",
+        "1234567",  # 7 digits, too short
+        "123456789",  # 9 digits, too long
+        "1234-567",  # hyphen not allowed
+        "ET1234567",  # letters not allowed
+        "AB/1234-56",  # old (wrong) format guess, no longer accepted
+        "12 34567",  # spaces not allowed
+        "1234567 ",  # trailing space
     ],
 )
 def test_admission_number_rejects_invalid(value):
@@ -99,14 +98,14 @@ def test_escape_md_v2_leaves_plain_text_untouched():
 
 
 def test_stop_callback_data_roundtrips():
-    payload = build_stop_callback_data("ET-2024-00123")
-    assert parse_stop_callback_data(payload) == "ET-2024-00123"
+    payload = build_stop_callback_data("12345678")
+    assert parse_stop_callback_data(payload) == "12345678"
 
 
 def test_stop_callback_data_stays_within_telegram_limit():
-    # Telegram caps callback_data at 64 bytes; admission numbers are capped
-    # at 30 chars by ADMISSION_NUMBER_RE, so the encoded payload must fit.
-    payload = build_stop_callback_data("A" * 30)
+    # Telegram caps callback_data at 64 bytes; admission numbers are always
+    # 8 digits per ADMISSION_NUMBER_RE, so the encoded payload comfortably fits.
+    payload = build_stop_callback_data("12345678")
     assert len(payload.encode("utf-8")) <= 64
 
 

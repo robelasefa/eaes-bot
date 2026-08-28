@@ -290,7 +290,7 @@ async def cmd_track(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args or []
     if len(args) < 2:
         await update.message.reply_text(
-            "Usage: /track <admission_number> <first_name>\nExample: /track 123456 Abebe"
+            "Usage: /track <admission_number> <first_name>\nExample: /track 88256644 Hirut"
         )
         return
 
@@ -311,8 +311,8 @@ async def cmd_track(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     outcome = await db.add_tracking(chat_id, admission_number, first_name)
     if outcome == "added":
         await update.message.reply_text(
-            f"Tracking started for admission number {admission_number}. "
-            "I'll message you here as soon as the result is out."
+            f"Got it, {first_name}! I'll keep an eye out and message you here "
+            "the moment your result is published."
         )
     elif outcome == "exists":
         await update.message.reply_text(

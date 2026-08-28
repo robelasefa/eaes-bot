@@ -12,8 +12,10 @@ import re
 # dynamic string interpolated into a MarkdownV2 message.
 _MDV2_RESERVED_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!])")
 
-#: Admission numbers as issued by EAES: letters, digits, slashes, hyphens.
-ADMISSION_NUMBER_RE = re.compile(r"^[A-Za-z0-9/\-]{3,30}$")
+#: EAES admission numbers as actually issued: exactly 8 digits, no letters,
+#: slashes, or hyphens. (Earlier drafts of this bot over-guessed the format —
+#: this is the real one, confirmed against the live site.)
+ADMISSION_NUMBER_RE = re.compile(r"^\d{8}$")
 
 #: First names: letters, spaces, periods, and hyphens only (e.g. "Mary-Jane", "O.J.").
 FIRST_NAME_RE = re.compile(r"^[A-Za-z\s.\-]{2,60}$")
