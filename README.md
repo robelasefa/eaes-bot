@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![tests](https://github.com/<owner>/<repo>/actions/workflows/tests.yml/badge.svg)](https://github.com/robelasefa/eaes-bot/actions/workflows/tests.yml)
+[![tests](https://github.com/robelasefa/eaes-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/robelasefa/eaes-bot/actions/workflows/tests.yml)
 
 A Telegram bot that polls `result.eaes.et` for tracked students and notifies
 each chat the moment their EUEE result is published. Drives a real Chrome
