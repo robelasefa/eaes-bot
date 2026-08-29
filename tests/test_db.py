@@ -27,7 +27,7 @@ async def test_add_tracking_returns_exists_for_duplicate():
     assert outcome == "exists"
 
     rows = await db.list_for_chat(1)
-    assert len(rows) == 1  # not duplicated
+    assert len(rows) == 1
 
 
 async def test_add_tracking_enforces_per_chat_limit(monkeypatch):
@@ -45,23 +45,18 @@ async def test_different_chats_have_independent_limits(monkeypatch):
     monkeypatch.setattr(db, "MAX_TRACKED_PER_CHAT", 1)
 
     assert await db.add_tracking(1, "12345671", "A") == "added"
-    assert (
-        await db.add_tracking(2, "12345671", "A") == "added"
-    )  # different chat, same admission#
+    assert await db.add_tracking(2, "12345671", "A") == "added"
 
 
 async def test_remove_tracking_deletes_existing_row():
     await db.add_tracking(1, "12345671", "Abebe")
     removed = await db.remove_tracking(1, "12345671")
     assert removed is True
-
-    rows = await db.list_for_chat(1)
-    assert rows == []
+    assert await db.list_for_chat(1) == []
 
 
 async def test_remove_tracking_returns_false_when_not_found():
-    removed = await db.remove_tracking(1, "does-not-exist")
-    assert removed is False
+    assert await db.remove_tracking(1, "does-not-exist") is False
 
 
 async def test_list_active_only_returns_active_rows():
@@ -87,20 +82,16 @@ async def test_increment_attempts_increments_and_returns_count():
 
 
 async def test_increment_attempts_on_missing_row_returns_zero():
-    count = await db.increment_attempts(1, "does-not-exist")
-    assert count == 0
+    assert await db.increment_attempts(1, "does-not-exist") == 0
 
 
 async def test_delete_tracking_removes_row():
     await db.add_tracking(1, "12345671", "Abebe")
     await db.delete_tracking(1, "12345671")
-
-    rows = await db.list_for_chat(1)
-    assert rows == []
+    assert await db.list_for_chat(1) == []
 
 
 async def test_delete_tracking_is_idempotent():
-    # Deleting a row that doesn't exist should not raise.
     await db.delete_tracking(1, "does-not-exist")
 
 
