@@ -1,9 +1,4 @@
-"""Central place for every environment-driven setting.
-
-Importing this module has no side effects beyond reading os.environ, so it's
-safe for db.py, scraper.py, and bot.py to all import from here without
-creating import cycles.
-"""
+"""Environment-driven settings, imported by db.py, scraper.py, and bot.py."""
 
 from __future__ import annotations
 
@@ -25,12 +20,8 @@ BROWSER_HEALTH_CHECK_TIMEOUT_SECONDS = int(
     os.environ.get("EAES_BROWSER_HEALTH_CHECK_TIMEOUT_SECONDS", "15")
 )
 
-# Chrome/nodriver
+# Chrome/nodriver. On headless Linux, set EAES_USE_VIRTUAL_DISPLAY=1 to have
+# scraper.py start a virtual display itself, or run under `xvfb-run`.
 CHROME_PROFILE_DIR = os.environ.get("EAES_CHROME_PROFILE_DIR", "./chrome_profile")
-# Leave unset to let nodriver auto-detect. Set explicitly if you need to pin
-# a specific Chrome/Chromium binary (common on Windows/macOS installs).
 CHROME_EXECUTABLE_PATH = os.environ.get("EAES_CHROME_EXECUTABLE_PATH") or None
-# On headless Linux servers there's no real display; set this to "1" to have
-# scraper.py spin up a virtual one via pyvirtualdisplay instead of relying on
-# an externally managed Xvfb process. No-op on Windows/macOS.
 USE_VIRTUAL_DISPLAY = os.environ.get("EAES_USE_VIRTUAL_DISPLAY", "0") == "1"

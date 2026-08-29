@@ -107,42 +107,6 @@ pytest
 Covers validation regexes, DOM-to-message parsing, and async DB CRUD
 (against a throwaway SQLite file — no external services needed).
 
-## Deployment
-
-Any process manager that sets env vars and restarts on failure works. On
-Linux, a systemd unit:
-
-```ini
-[Unit]
-Description=EAES Result Tracker Bot
-After=network-online.target
-
-[Service]
-Type=simple
-User=eaesbot
-WorkingDirectory=/opt/eaes-bot
-EnvironmentFile=/opt/eaes-bot/.env
-ExecStart=/opt/eaes-bot/venv/bin/python bot.py
-Restart=on-failure
-MemoryMax=1200M
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Set `EAES_USE_VIRTUAL_DISPLAY=1` in `.env` since a systemd service has no
-display of its own. `MemoryMax` + `Restart=on-failure` recycle a leaked or
-stuck process rather than taking the host down.
-
-## Operational notes
-
-- This scrapes around a third-party portal's anti-bot protection — if EAES
-  changes its DOM or tightens Cloudflare, checks will start failing with
-  `status=blocked`/`status=error`. Watch for those rising relative to
-  `status=pending`.
-- Admission numbers are always masked in logs (e.g. `12****56`).
-- No automated DB backups. For SQLite in WAL mode, checkpoint first or copy
-  the `.db`, `.db-wal`, and `.db-shm` files together.
 
 ## License
 
