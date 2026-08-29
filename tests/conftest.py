@@ -28,9 +28,9 @@ _tmp_db_dir = tempfile.mkdtemp(prefix="eaes_bot_test_")
 _tmp_db_path = Path(_tmp_db_dir) / "test_tracking.db"
 os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{_tmp_db_path}")
 
-import pytest_asyncio  # noqa: E402
+import pytest_asyncio
 
-import db as db_module  # noqa: E402
+import db as db_module
 
 
 @pytest_asyncio.fixture(autouse=True)

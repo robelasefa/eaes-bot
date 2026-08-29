@@ -155,13 +155,12 @@ async def check_one_student(
 
             await _record_attempt_and_maybe_drop(application, chat_id, admission_number)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(
                 "Unexpected error checking chat %s (admission=%s): %s",
                 chat_id,
                 mask(admission_number),
                 e,
-                exc_info=True,
             )
             await _record_attempt_and_maybe_drop(application, chat_id, admission_number)
 
