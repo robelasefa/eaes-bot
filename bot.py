@@ -10,7 +10,13 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    BotCommand,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
+from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
@@ -21,6 +27,7 @@ from utils import (
     ADMISSION_NUMBER_RE,
     FIRST_NAME_RE,
     build_stop_callback_data,
+    escape_md_v2,
     mask,
     parse_stop_callback_data,
 )
@@ -87,7 +94,9 @@ async def check_one_student(
                 message_text = scraper.parse_eaes_raw_text(result.get("raw_text", ""))
                 try:
                     await application.bot.send_message(
-                        chat_id=chat_id, text=message_text, parse_mode="MarkdownV2"
+                        chat_id=chat_id,
+                        text=message_text,
+                        parse_mode=ParseMode.MARKDOWN_V2,
                     )
                     logger.info(
                         "Delivered result to chat %s (admission=%s)",
@@ -229,23 +238,32 @@ async def poll_cycle(context: ContextTypes.DEFAULT_TYPE) -> None:
         application.bot_data["poll_running"] = False
 
 
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "EAES Result Tracker\n\n"
-        "/track <admission_number> <first_name> — start tracking a result\n"
-        "/status — show what you're currently tracking\n"
-        "/stop <admission_number> — stop tracking\n\n"
-        f"I check for new results roughly every {config.POLL_INTERVAL_SECONDS // 60} minute(s) "
-        "and will message you the moment yours is published."
+        "*Welcome to Ethio Entrance Checker\\!*\n\n"
+        f"I’ll automatically check for your Grade 12 results every ~{config.POLL_INTERVAL_SECONDS // 60} minutes "
+        "and let you know as soon as they’re available\\.\n\n"
+        "📌 *Available commands:*\n"
+        "• `/track <admission_no> <first_name>` — Start tracking your result\n"
+        "• `/status` — See your tracked results\n"
+        "• `/stop <admission_no>` — Stop tracking a result\n\n"
+        "Good luck with your results\\! 🎉",
+        parse_mode=ParseMode.MARKDOWN_V2,
     )
 
 
 async def cmd_track(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     args = context.args or []
+
     if len(args) < 2:
         await update.message.reply_text(
-            "Usage: /track <admission_number> <first_name>\nExample: /track 88256644 Hirut"
+            "*How to track a result*\n\n"
+            "Send the command like this:\n"
+            "`/track <admission_number> <first_name>`\n\n"
+            "Example:\n"
+            "/track 88256644 Hirut",
+            parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
 
@@ -254,44 +272,73 @@ async def cmd_track(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not ADMISSION_NUMBER_RE.match(admission_number):
         await update.message.reply_text(
-            "That admission number doesn't look valid. Please check it and try again."
+            "That admission number doesn't look right. "
+            "Please double-check it and try again."
         )
         return
+
     if not FIRST_NAME_RE.match(first_name):
         await update.message.reply_text(
-            "That first name doesn't look valid. Please check it and try again."
+            "That name doesn't look right. "
+            "Please enter the first name exactly as it appears on the exam registration."
         )
         return
 
     outcome = await db.add_tracking(chat_id, admission_number, first_name)
+
     if outcome == "added":
+        safe_name = escape_md_v2(first_name)
+        safe_admission = escape_md_v2(admission_number)
+
         await update.message.reply_text(
-            f"Got it, {first_name}! I'll keep an eye out and message you here the moment your result is published."
+            "✅ *You're all set\\!*\n\n"
+            f"I'm now tracking the result for *{safe_name}* "
+            f"\\(`{safe_admission}`\\)\\. "
+            "I'll message you as soon as the result is available\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
         )
+
     elif outcome == "exists":
         await update.message.reply_text(
-            "You're already tracking that admission number."
+            "You're already tracking that admission number. No need to add it again."
         )
+
     elif outcome == "limit_reached":
         await update.message.reply_text(
-            f"You're already tracking the maximum of {config.MAX_TRACKED_PER_CHAT} results. "
-            "Use /stop on one first if you'd like to add another."
+            f"You've reached the limit of {config.MAX_TRACKED_PER_CHAT} tracked results.\n\n"
+            "Stop tracking one of them with /stop, then you can add another."
         )
 
 
-async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     rows = await db.list_for_chat(chat_id)
+
     if not rows:
-        await update.message.reply_text("You're not tracking any results right now.")
+        await update.message.reply_text(
+            "📭 You're not tracking any results yet.\n\nUse /track to add one."
+        )
         return
 
-    lines = ["Currently tracking:"]
+    lines = ["📋 *Your tracked results*", ""]
+
     keyboard_rows = []
+
     for row in rows:
-        lines.append(
-            f"• {row.admission_number} ({row.first_name}) — {row.status} ({row.attempts}/{config.MAX_ATTEMPTS} attempts)"
+        safe_name = escape_md_v2(row.first_name)
+        safe_admission = escape_md_v2(row.admission_number)
+        safe_status = escape_md_v2(row.status.replace("_", " ").title())
+
+        lines.extend(
+            [
+                f"👤 *{safe_name}*",
+                f"🎫 `{safe_admission}`",
+                f"Status: *{safe_status}*",
+                f"Checks: {row.attempts}/{config.MAX_ATTEMPTS}",
+                "",
+            ]
         )
+
         keyboard_rows.append(
             [
                 InlineKeyboardButton(
@@ -302,27 +349,40 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
 
     await update.message.reply_text(
-        "\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard_rows)
+        "\n".join(lines).rstrip(),
+        parse_mode=ParseMode.MARKDOWN_V2,
+        reply_markup=InlineKeyboardMarkup(keyboard_rows),
     )
 
 
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     args = context.args or []
+
     if len(args) != 1:
-        await update.message.reply_text("Usage: /stop <admission_number>")
+        await update.message.reply_text(
+            "*How to stop tracking*\n\n"
+            "Send the command like this:\n"
+            "/stop <admission_number\\>\n\n"
+            "Example:\n"
+            "`/stop 88256644`",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
         return
 
     admission_number = args[0].strip()
     removed = await db.remove_tracking(chat_id, admission_number)
+
     if removed:
-        await update.message.reply_text(f"Stopped tracking {admission_number}.")
+        await update.message.reply_text(f"✅ Stopped tracking {admission_number}.")
     else:
-        await update.message.reply_text("You weren't tracking that admission number.")
+        await update.message.reply_text(
+            "I couldn't find that admission number in your tracked results."
+        )
 
 
-async def on_stop_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles taps on the inline "Stop <admission_number>" button from /status."""
+async def on_stop_button(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles taps on the inline 'Stop <admission_number>' button from /status."""
     query = update.callback_query
     await query.answer()
 
@@ -332,11 +392,12 @@ async def on_stop_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     chat_id = update.effective_chat.id
     removed = await db.remove_tracking(chat_id, admission_number)
-    text = (
-        f"Stopped tracking {admission_number}."
-        if removed
-        else "That entry is no longer being tracked."
-    )
+
+    if removed:
+        text = f"✅ Stopped tracking {admission_number}."
+    else:
+        text = "That result is no longer being tracked."
+
     await query.edit_message_text(text)
 
 
@@ -361,7 +422,7 @@ async def post_shutdown(application: Application) -> None:
     logger.info("Shutdown complete.")
 
 
-async def error_handler(update, context):
+async def error_handler(_, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Exception while handling an update:", exc_info=context.error)
 
 
