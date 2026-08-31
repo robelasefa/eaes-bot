@@ -36,7 +36,7 @@ def test_parse_success_extracts_all_fields():
     assert "12345678" in message
     assert "Natural Science" in message
     assert "414" in message
-    assert "82\\.8" in message
+    assert "82.8" in message
     assert "Mathematics" in message
     assert "92" in message
 
@@ -58,12 +58,6 @@ def test_parse_missing_fields_falls_back_to_defaults():
     message = parse_eaes_raw_text("TOTAL\n0\nAVG\n0")
     assert "Unknown" in message
     assert "N/A" in message
-
-
-def test_parse_output_is_valid_markdownv2_escaped():
-    message = parse_eaes_raw_text(SAMPLE_RESULT_TEXT)
-    assert "82\\.8" in message
-    assert "82.8" not in message
 
 
 def test_parse_empty_input_does_not_raise():

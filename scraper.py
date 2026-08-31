@@ -8,6 +8,7 @@ directly — it only calls the functions below.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import platform
@@ -16,7 +17,7 @@ import random
 import nodriver as uc
 
 import config
-from utils import escape_md_v2, mask
+from utils import mask
 
 logger = logging.getLogger("eaes_bot.scraper")
 
@@ -40,13 +41,15 @@ async def start_browser() -> uc.Browser:
             _virtual_display.start()
             logger.info("Virtual display started.")
         except ImportError:
-            logger.error("EAES_USE_VIRTUAL_DISPLAY=1 but pyvirtualdisplay isn't installed.")
+            logger.error(
+                "EAES_USE_VIRTUAL_DISPLAY=1 but pyvirtualdisplay isn't installed."
+            )
             raise
 
     kwargs = {
-    "user_data_dir": config.CHROME_PROFILE_DIR,
-    "headless": False,  # Turnstile is far more likely to pass in headed mode
-}
+        "user_data_dir": config.CHROME_PROFILE_DIR,
+        "headless": False,  # Turnstile is far more likely to pass in headed mode
+    }
     if config.CHROME_EXECUTABLE_PATH:
         kwargs["browser_executable_path"] = config.CHROME_EXECUTABLE_PATH
 
@@ -71,6 +74,8 @@ def stop_browser(browser: uc.Browser | None) -> None:
 
 
 async def is_browser_alive(browser: uc.Browser, timeout_seconds: int | None = None) -> bool:
+    
+
     """Opens a blank tab and runs trivial JS to check the browser is responsive."""
     timeout_seconds = timeout_seconds or config.BROWSER_HEALTH_CHECK_TIMEOUT_SECONDS
     page = None
@@ -95,7 +100,9 @@ async def is_browser_alive(browser: uc.Browser, timeout_seconds: int | None = No
 
 # status: "success" (raw_text has the result), "pending" (not published yet),
 # "blocked" (Turnstile token never attached), "error" (DOM/parse failure)
-async def fetch_eaes_result(browser: uc.Browser, admission_number: str, first_name: str) -> dict:
+async def fetch_eaes_result(
+    browser: uc.Browser, admission_number: str, first_name: str
+) -> dict:
     page = None
     try:
         page = await browser.get(config.EAES_URL, new_tab=True)
@@ -124,7 +131,9 @@ async def fetch_eaes_result(browser: uc.Browser, admission_number: str, first_na
         """
         filled = await page.evaluate(fill_js)
         if not filled:
-            logger.warning("Could not locate admission/name inputs for %s", mask(admission_number))
+            logger.warning(
+                "Could not locate admission/name inputs for %s", mask(admission_number)
+            )
             return {"status": "error", "reason": "inputs_not_found"}
 
         await _jitter_sleep(1)
@@ -144,7 +153,10 @@ async def fetch_eaes_result(browser: uc.Browser, admission_number: str, first_na
             await asyncio.sleep(1)
 
         if not token_ready:
-            logger.warning("Turnstile token failed to attach in time for %s", mask(admission_number))
+            logger.warning(
+                "Turnstile token failed to attach in time for %s",
+                mask(admission_number),
+            )
             return {"status": "blocked", "reason": "turnstile_timeout"}
 
         clicked = await page.evaluate("""
@@ -160,7 +172,9 @@ async def fetch_eaes_result(browser: uc.Browser, admission_number: str, first_na
         })()
         """)
         if not clicked:
-            logger.warning("Check-result button not found for %s", mask(admission_number))
+            logger.warning(
+                "Check-result button not found for %s", mask(admission_number)
+            )
             return {"status": "error", "reason": "button_not_found"}
 
         await _jitter_sleep(6)
@@ -177,7 +191,11 @@ async def fetch_eaes_result(browser: uc.Browser, admission_number: str, first_na
             return {"status": "success", "raw_text": raw_text}
 
         logger.warning("Unrecognized page state for %s", mask(admission_number))
-        return {"status": "error", "reason": "unrecognized_page_state", "raw_text": raw_text[:500]}
+        return {
+            "status": "error",
+            "reason": "unrecognized_page_state",
+            "raw_text": raw_text[:500],
+        }
 
     except Exception as e:  # noqa: BLE001
         logger.error("Error fetching result for %s: %s", mask(admission_number), e)
@@ -217,7 +235,7 @@ SUBJECT_EMOJIS = {
 
 
 def parse_eaes_raw_text(raw_text: str) -> str:
-    """Parses raw extracted DOM text from EAES into a MarkdownV2 Telegram message."""
+    """Parses raw extracted DOM text from EAES into an HTML Telegram message."""
     lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
 
     name = "Unknown"
@@ -251,23 +269,24 @@ def parse_eaes_raw_text(raw_text: str) -> str:
     except ValueError:
         pass
 
-    # Every value below comes straight from the DOM, so it's run through
-    # escape_md_v2 before being embedded in the MarkdownV2 message.
+    # Values from the DOM are escaped with html.escape for safe HTML rendering
     msg_lines = [
-        "🎓 *EAES Exam Result*",
+        "🎓 <b>EAES Exam Result</b>",
         "",
-        f"👤 *Name:* `{escape_md_v2(name)}`",
-        f"🏫 *School:* `{escape_md_v2(school)}`",
-        f"🆔 *Admission No:* `{escape_md_v2(admission_no)}`",
-        f"📚 *Stream:* `{escape_md_v2(stream)}` \\| *Sex:* `{escape_md_v2(gender)}`",
+        f"👤 <b>Name:</b> <code>{html.escape(name)}</code>",
+        f"🏫 <b>School:</b> <code>{html.escape(school)}</code>",
+        f"🆔 <b>Admission No:</b> <code>{html.escape(admission_no)}</code>",
+        f"📚 <b>Stream:</b> <code>{html.escape(stream)}</code> | <b>Sex:</b> <code>{html.escape(gender)}</code>",
         "",
-        f"🏆 *Total Score:* `{escape_md_v2(total_score)}`",
-        f"📈 *Average:* `{escape_md_v2(avg_score)}`",
+        f"🏆 <b>Total Score:</b> <code>{html.escape(total_score)}</code>",
+        f"📈 <b>Average:</b> <code>{html.escape(avg_score)}</code>",
         "",
-        "*📋 Subject Breakdown:*",
+        "<b>📋 Subject Breakdown:</b>",
     ]
     for subj, score in subjects:
         emoji = SUBJECT_EMOJIS.get(subj, "•")
-        msg_lines.append(f"{emoji} *{escape_md_v2(subj)}:* `{escape_md_v2(score)}`")
+        msg_lines.append(
+            f"{emoji} <b>{html.escape(subj)}:</b> <code>{html.escape(score)}</code>"
+        )
 
     return "\n".join(msg_lines)

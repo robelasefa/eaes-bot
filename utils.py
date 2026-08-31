@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import re
 
-_MDV2_RESERVED_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!])")
-
 ADMISSION_NUMBER_RE = re.compile(
     r"^\d{8}$"
 )  # admission numbers are 8 digits, no letters/dashes
@@ -21,13 +19,6 @@ def mask(value: str) -> str:
     if len(value) <= 4:
         return "*" * len(value)
     return value[:2] + "*" * (len(value) - 4) + value[-2:]
-
-
-def escape_md_v2(text) -> str:
-    """Escape Telegram MarkdownV2 reserved characters in dynamic text."""
-    if text is None:
-        return ""
-    return _MDV2_RESERVED_RE.sub(r"\\\1", str(text))
 
 
 def build_stop_callback_data(admission_number: str) -> str:

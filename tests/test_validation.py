@@ -4,7 +4,6 @@ from utils import (
     ADMISSION_NUMBER_RE,
     FIRST_NAME_RE,
     build_stop_callback_data,
-    escape_md_v2,
     mask,
     parse_stop_callback_data,
 )
@@ -63,18 +62,6 @@ def test_mask_long_value_keeps_first_and_last_two_chars():
 
 def test_mask_empty_string():
     assert mask("") == ""
-
-
-def test_escape_md_v2_escapes_reserved_characters():
-    assert escape_md_v2("Total: 98.5!") == "Total: 98\\.5\\!"
-
-
-def test_escape_md_v2_handles_none():
-    assert escape_md_v2(None) == ""
-
-
-def test_escape_md_v2_leaves_plain_text_untouched():
-    assert escape_md_v2("Abebe") == "Abebe"
 
 
 def test_stop_callback_data_roundtrips():

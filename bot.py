@@ -8,6 +8,7 @@ published.
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 
 from telegram import (
@@ -27,7 +28,6 @@ from utils import (
     ADMISSION_NUMBER_RE,
     FIRST_NAME_RE,
     build_stop_callback_data,
-    escape_md_v2,
     mask,
     parse_stop_callback_data,
 )
@@ -96,7 +96,7 @@ async def check_one_student(
                     await application.bot.send_message(
                         chat_id=chat_id,
                         text=message_text,
-                        parse_mode=ParseMode.MARKDOWN_V2,
+                        parse_mode=ParseMode.HTML,
                     )
                     logger.info(
                         "Delivered result to chat %s (admission=%s)",
@@ -240,15 +240,15 @@ async def poll_cycle(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "*Welcome to Ethio Entrance Checker\\!*\n\n"
+        "<b>Welcome to Ethio Entrance Checker!</b>\n\n"
         f"I’ll automatically check for your Grade 12 results every ~{config.POLL_INTERVAL_SECONDS // 60} minutes "
-        "and let you know as soon as they’re available\\.\n\n"
-        "📌 *Available commands:*\n"
-        "• `/track <admission_no> <first_name>` — Start tracking your result\n"
-        "• `/status` — See your tracked results\n"
-        "• `/stop <admission_no>` — Stop tracking a result\n\n"
-        "Good luck with your results\\! 🎉",
-        parse_mode=ParseMode.MARKDOWN_V2,
+        "and let you know as soon as they’re available.\n\n"
+        "📌 <b>Available commands:</b>\n"
+        "• <code>/track &lt;admission_no&gt; &lt;first_name&gt;</code> — Start tracking your result\n"
+        "• <code>/status</code> — See your tracked results\n"
+        "• <code>/stop &lt;admission_no&gt;</code> — Stop tracking a result\n\n"
+        "Good luck with your results! 🎉",
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -258,12 +258,12 @@ async def cmd_track(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if len(args) < 2:
         await update.message.reply_text(
-            "*How to track a result*\n\n"
+            "<b>How to track a result</b>\n\n"
             "Send the command like this:\n"
-            "`/track <admission_number> <first_name>`\n\n"
+            "<code>/track &lt;admission_number&gt; &lt;first_name&gt;</code>\n\n"
             "Example:\n"
             "/track 88256644 Hirut",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -287,15 +287,15 @@ async def cmd_track(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     outcome = await db.add_tracking(chat_id, admission_number, first_name)
 
     if outcome == "added":
-        safe_name = escape_md_v2(first_name)
-        safe_admission = escape_md_v2(admission_number)
+        safe_name = html.escape(first_name)
+        safe_admission = html.escape(admission_number)
 
         await update.message.reply_text(
-            "✅ *You're all set\\!*\n\n"
-            f"I'm now tracking the result for *{safe_name}* "
-            f"\\(`{safe_admission}`\\)\\. "
-            "I'll message you as soon as the result is available\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            "✅ <b>You're all set!</b>\n\n"
+            f"I'm now tracking the result for <b>{safe_name}</b> "
+            f"(<code>{safe_admission}</code>). "
+            "I'll message you as soon as the result is available.",
+            parse_mode=ParseMode.HTML,
         )
 
     elif outcome == "exists":
@@ -320,20 +320,20 @@ async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    lines = ["📋 *Your tracked results*", ""]
+    lines = ["📋 <b>Your tracked results</b>", ""]
 
     keyboard_rows = []
 
     for row in rows:
-        safe_name = escape_md_v2(row.first_name)
-        safe_admission = escape_md_v2(row.admission_number)
-        safe_status = escape_md_v2(row.status.replace("_", " ").title())
+        safe_name = html.escape(row.first_name)
+        safe_admission = html.escape(row.admission_number)
+        safe_status = html.escape(row.status.replace("_", " ").title())
 
         lines.extend(
             [
-                f"👤 *{safe_name}*",
-                f"🎫 `{safe_admission}`",
-                f"Status: *{safe_status}*",
+                f"👤 <b>{safe_name}</b>",
+                f"🎫 <code>{safe_admission}</code>",
+                f"Status: <b>{safe_status}</b>",
                 f"Checks: {row.attempts}/{config.MAX_ATTEMPTS}",
                 "",
             ]
@@ -350,7 +350,7 @@ async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text(
         "\n".join(lines).rstrip(),
-        parse_mode=ParseMode.MARKDOWN_V2,
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard_rows),
     )
 
@@ -361,12 +361,12 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if len(args) != 1:
         await update.message.reply_text(
-            "*How to stop tracking*\n\n"
+            "<b>How to stop tracking</b>\n\n"
             "Send the command like this:\n"
-            "/stop <admission_number\\>\n\n"
+            "/stop &lt;admission_number&gt;\n\n"
             "Example:\n"
-            "`/stop 88256644`",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            "<code>/stop 88256644</code>",
+            parse_mode=ParseMode.HTML,
         )
         return
 
