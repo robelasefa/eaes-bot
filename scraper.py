@@ -74,8 +74,6 @@ def stop_browser(browser: uc.Browser | None) -> None:
 
 
 async def is_browser_alive(browser: uc.Browser, timeout_seconds: int | None = None) -> bool:
-    
-
     """Opens a blank tab and runs trivial JS to check the browser is responsive."""
     timeout_seconds = timeout_seconds or config.BROWSER_HEALTH_CHECK_TIMEOUT_SECONDS
     page = None
