@@ -46,7 +46,7 @@ tests/       pytest suite
 ## Quick start
 
 ```bash
-git clone <this-repo> && cd eaes-bot
+git clone https://github.com/robelasefa/eaes-bot.git && cd eaes-bot
 python3 -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env   # edit .env, set TELEGRAM_BOT_TOKEN
