@@ -10,11 +10,17 @@ venv/
 *.sqlite3
 chrome_profile/
 
-# Data & Security files
+# Scraped/exported data
+/data/
+/exports/
 *.csv
-*.json
-*.txt
-auth.js
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
 
 # Testing
 .pytest_cache/
+.coverage
